@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client.js';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext.jsx';
+import { can } from '../security/permissions.js';
 
 export default function Dashboard() {
+  const { user } = useAuth();
   const [stats, setStats]     = useState(null);
   const [topProd, setTopProd] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -11,9 +14,9 @@ export default function Dashboard() {
     async function load() {
       try {
         const [ventas, productos, clientes, stockBajo, masVendidos] = await Promise.all([
-          api.get('/ventas?estado=completada'),
+          can(user, 'ventas:view') ? api.get('/ventas?estado=completada') : Promise.resolve([]),
           api.get('/productos'),
-          api.get('/clientes'),
+          can(user, 'clientes:view') ? api.get('/clientes') : Promise.resolve([]),
           api.get('/productos/stock-bajo'),
           api.get('/productos/mas-vendidos'),
         ]);
@@ -30,7 +33,7 @@ export default function Dashboard() {
       finally { setLoading(false); }
     }
     load();
-  }, []);
+  }, [user]);
 
   if (loading) return <div className="spinner">Cargando dashboard...</div>;
 

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { can } from '../security/permissions.js';
 
 function ClienteModal({ cliente, onSave, onClose }) {
   const editing = !!cliente?.id_cliente;
@@ -53,6 +55,7 @@ function ClienteModal({ cliente, onSave, onClose }) {
 }
 
 export default function ClientesPage() {
+  const { user } = useAuth();
   const [clientes, setClientes] = useState([]);
   const [historial, setHistorial] = useState([]);
   const [tab, setTab] = useState('lista'); 
@@ -94,7 +97,7 @@ export default function ClientesPage() {
           <h1 className="page-title">Clientes</h1>
           <p className="page-subtitle">CRUD + historial de compras con GROUP BY</p>
         </div>
-        <button className="btn btn-primary" onClick={()=>setModal('new')}>+ Nuevo Cliente</button>
+        {can(user, 'clientes:create') && <button className="btn btn-primary" onClick={()=>setModal('new')}>+ Nuevo Cliente</button>}
       </div>
 
       {error   && <div className="alert alert-error"   onClick={()=>setError('')}>{error}</div>}
@@ -118,7 +121,7 @@ export default function ClientesPage() {
             <div className="table-wrap">
               {loading ? <div className="spinner">Cargando...</div> : (
                 <table>
-                  <thead><tr><th>Nombre</th><th>Email</th><th>Teléfono</th><th>Dirección</th><th>Registro</th><th>Acciones</th></tr></thead>
+                  <thead><tr><th>Nombre</th><th>Email</th><th>Teléfono</th><th>Dirección</th><th>Registro</th>{user?.rol === 'rol_admin' && <th>Acciones</th>}</tr></thead>
                   <tbody>
                     {clientes.map(c=>(
                       <tr key={c.id_cliente}>
@@ -127,12 +130,14 @@ export default function ClientesPage() {
                         <td>{c.telefono||'—'}</td>
                         <td>{c.direccion||'—'}</td>
                         <td>{new Date(c.fecha_registro).toLocaleDateString('es-GT')}</td>
-                        <td>
-                          <div style={{display:'flex',gap:6}}>
-                            <button className="btn btn-ghost btn-sm" onClick={()=>setModal(c)}>Editar</button>
-                            <button className="btn btn-danger btn-sm" onClick={()=>deleteCliente(c.id_cliente)}>Eliminar</button>
-                          </div>
-                        </td>
+                        {user?.rol === 'rol_admin' && (
+                          <td>
+                            <div style={{display:'flex',gap:6}}>
+                              <button className="btn btn-ghost btn-sm" onClick={()=>setModal(c)}>Editar</button>
+                              <button className="btn btn-danger btn-sm" onClick={()=>deleteCliente(c.id_cliente)}>Eliminar</button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))}
                     {!clientes.length && <tr><td colSpan="6" style={{textAlign:'center',color:'var(--text-muted)',padding:32}}>No hay clientes</td></tr>}

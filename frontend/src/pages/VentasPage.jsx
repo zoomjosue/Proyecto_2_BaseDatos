@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
 
 const ESTADO_BADGE = {
   completada: 'badge-success',
@@ -8,6 +9,7 @@ const ESTADO_BADGE = {
 };
 
 export default function VentasPage() {
+  const { user } = useAuth();
   const [ventas, setVentas]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [estado, setEstado]   = useState('');
@@ -86,7 +88,7 @@ export default function VentasPage() {
                     <td>
                       <div style={{display:'flex',gap:6}}>
                         <button className="btn btn-info btn-sm" onClick={()=>verDetalle(v.id_venta)}>Ver</button>
-                        {v.estado !== 'anulada' && (
+                        {v.estado !== 'anulada' && ['rol_admin','rol_gerente'].includes(user?.rol) && (
                           <button className="btn btn-danger btn-sm" onClick={()=>anular(v.id_venta)}>Anular</button>
                         )}
                       </div>

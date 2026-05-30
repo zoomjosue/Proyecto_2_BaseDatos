@@ -9,11 +9,15 @@ async function request(path, options = {}) {
   const token = getToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
-  const data = await res.json();
+  const res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: 'include' });
+  const contentType = res.headers.get('content-type') || '';
+  const data = contentType.includes('application/json') ? await res.json() : null;
 
   if (!res.ok) {
-    throw new Error(data.error || `HTTP ${res.status}`);
+    throw new Error(data?.error || `Error HTTP ${res.status}: el servidor no devolvio JSON`);
+  }
+  if (!data) {
+    throw new Error('Respuesta invalida del servidor: se esperaba JSON');
   }
   return data;
 }

@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { can } from '../security/permissions.js';
 
 function ProductoModal({ producto, catalogos, onSave, onClose }) {
   const editing = !!producto?.id_producto;
@@ -99,6 +101,7 @@ function ProductoModal({ producto, catalogos, onSave, onClose }) {
 }
 
 export default function ProductosPage() {
+  const { user } = useAuth();
   const [productos,  setProductos]  = useState([]);
   const [catalogos,  setCatalogos]  = useState({categorias:[],marcas:[],deportes:[],proveedores:[]});
   const [loading,    setLoading]    = useState(true);
@@ -148,7 +151,7 @@ export default function ProductosPage() {
           <h1 className="page-title">Productos</h1>
           <p className="page-subtitle">CRUD con JOIN entre PRODUCTO, CATEGORIA, MARCA, DEPORTE, PROVEEDOR</p>
         </div>
-        <button className="btn btn-primary" onClick={()=>setModal('new')}>+ Nuevo Producto</button>
+        {can(user, 'productos:create') && <button className="btn btn-primary" onClick={()=>setModal('new')}>+ Nuevo Producto</button>}
       </div>
 
       {error   && <div className="alert alert-error"   onClick={()=>setError('')}>{error}</div>}
@@ -169,7 +172,7 @@ export default function ProductosPage() {
               <thead>
                 <tr>
                   <th>Nombre</th><th>Categoría</th><th>Marca</th><th>Deporte</th>
-                  <th>Precio</th><th>Stock</th><th>Mín.</th><th>Acciones</th>
+                  <th>Precio</th><th>Stock</th><th>Mín.</th>{(can(user, 'productos:update') || can(user, 'productos:delete')) && <th>Acciones</th>}
                 </tr>
               </thead>
               <tbody>
@@ -186,12 +189,14 @@ export default function ProductosPage() {
                       </span>
                     </td>
                     <td>{p.stock_minimo}</td>
-                    <td>
-                      <div style={{display:'flex',gap:6}}>
-                        <button className="btn btn-ghost btn-sm" onClick={()=>setModal(p)}>Editar</button>
-                        <button className="btn btn-danger btn-sm" onClick={()=>deleteProducto(p.id_producto)}>Eliminar</button>
-                      </div>
-                    </td>
+                    {(can(user, 'productos:update') || can(user, 'productos:delete')) && (
+                      <td>
+                        <div style={{display:'flex',gap:6}}>
+                          {can(user, 'productos:update') && <button className="btn btn-ghost btn-sm" onClick={()=>setModal(p)}>Editar</button>}
+                          {can(user, 'productos:delete') && <button className="btn btn-danger btn-sm" onClick={()=>deleteProducto(p.id_producto)}>Eliminar</button>}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
                 {!productos.length && <tr><td colSpan="8" style={{textAlign:'center',color:'var(--text-muted)',padding:32}}>No hay productos</td></tr>}

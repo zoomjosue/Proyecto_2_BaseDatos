@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
+import { can } from '../security/permissions.js';
 
 function exportCSV(data, filename) {
   if (!data.length) return;
@@ -17,7 +19,9 @@ function exportCSV(data, filename) {
 }
 
 export default function ReportesPage() {
+  const { user } = useAuth();
   const [reporte, setReporte] = useState(null);
+  const [basico, setBasico] = useState({ masVendidos: [], stockBajo: [] });
   const [desde,   setDesde]   = useState('');
   const [hasta,   setHasta]   = useState('');
   const [sinVentas, setSinVentas] = useState([]);
@@ -30,6 +34,14 @@ export default function ReportesPage() {
     if (desde) params.append('fecha_desde', desde);
     if (hasta) params.append('fecha_hasta', hasta);
     try {
+      if (!can(user, 'reportes:view') && can(user, 'reportes:basic')) {
+        const [masVendidos, stockBajo] = await Promise.all([
+          api.get('/productos/mas-vendidos'),
+          api.get('/productos/stock-bajo'),
+        ]);
+        setBasico({ masVendidos, stockBajo });
+        return;
+      }
       const [rep, sv] = await Promise.all([
         api.get(`/ventas/reporte?${params}`),
         api.get('/productos/sin-ventas'),
@@ -40,7 +52,65 @@ export default function ReportesPage() {
     finally { setLoading(false); }
   }
 
-  useEffect(()=>{ load(); }, [desde, hasta]);
+  useEffect(()=>{ load(); }, [desde, hasta, user]);
+
+  if (!can(user, 'reportes:view') && can(user, 'reportes:basic')) {
+    return (
+      <div>
+        <div className="page-header">
+          <h1 className="page-title">Reportes Basicos</h1>
+        </div>
+
+        {loading ? <div className="spinner">Cargando reportes...</div> : (
+          <>
+            <div className="card" style={{padding:0}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 20px'}}>
+                <div className="card-title" style={{marginBottom:4}}>Productos Mas Vendidos</div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Producto</th><th>Marca</th><th>Deporte</th><th>Unidades</th><th>Ingresos</th></tr></thead>
+                  <tbody>
+                    {basico.masVendidos.map(p=>(
+                      <tr key={p.id_producto}>
+                        <td><strong>{p.nombre}</strong></td>
+                        <td>{p.marca}</td>
+                        <td>{p.deporte}</td>
+                        <td>{p.total_vendido}</td>
+                        <td>Q{parseFloat(p.ingresos_totales).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="card" style={{padding:0}}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 20px'}}>
+                <div className="card-title" style={{marginBottom:4}}>Stock Bajo</div>
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead><tr><th>Producto</th><th>Categoria</th><th>Proveedor</th><th>Stock</th><th>Minimo</th></tr></thead>
+                  <tbody>
+                    {basico.stockBajo.map(p=>(
+                      <tr key={p.id_producto}>
+                        <td><strong>{p.nombre}</strong></td>
+                        <td>{p.categoria}</td>
+                        <td>{p.proveedor}</td>
+                        <td>{p.stock}</td>
+                        <td>{p.stock_minimo}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div>
