@@ -65,7 +65,7 @@ CREATE TABLE `USUARIO` (
   `nombre`        varchar(100) NOT NULL,
   `email`         varchar(150) NOT NULL,
   `password_hash` varchar(255) NOT NULL,
-  `rol`           enum('admin','empleado') NOT NULL DEFAULT 'empleado',
+  `rol`           enum('rol_admin','rol_gerente','rol_vendedor','rol_inventario','rol_consulta') NOT NULL DEFAULT 'rol_consulta',
   `created_at`    datetime NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id_usuario`),
   UNIQUE KEY `uq_usuario_email` (`email`)
@@ -221,7 +221,19 @@ INSERT INTO PROVEEDOR (nombre, contacto, email, telefono) VALUES
   ('ProSport Guatemala','María López','proveedor@prosportgt.com','2555-4444'),
   ('Distribuidora Olímpica','Juan Herrera','olimpica@deportes.com','2666-5555');
 
--- USUARIO y EMPLEADO son creados por el backend al primer arranque
+INSERT INTO USUARIO (nombre, email, password_hash, rol) VALUES
+  ('Administrador Sistema','admin@tienda.com','sha256$2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b','rol_admin'),
+  ('Gerente General','gerente@tienda.com','sha256$2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b','rol_gerente'),
+  ('Vendedor Punto de Venta','vendedor@tienda.com','sha256$2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b','rol_vendedor'),
+  ('Encargado Inventario','inventario@tienda.com','sha256$2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b','rol_inventario'),
+  ('Usuario Consulta','consulta@tienda.com','sha256$2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b','rol_consulta');
+
+INSERT INTO EMPLEADO (id_usuario, telefono, direccion, fecha_contrato) VALUES
+  (1,'5555-0001','Zona 10','2022-01-15'),
+  (2,'5555-0002','Zona 4','2022-03-01'),
+  (3,'5555-0003','Mixco','2023-01-10'),
+  (4,'5555-0004','Villa Nueva','2023-06-15'),
+  (5,'5555-0005','Zona 18','2024-01-05');
 
 INSERT INTO CLIENTE (nombre, email, telefono, direccion) VALUES
   ('Pedro Alvarado','pedro@gmail.com','5001-0001','Zona 1, Guatemala'),
@@ -275,3 +287,276 @@ INSERT INTO PRODUCTO (id_categoria, id_proveedor, id_marca, id_deporte, nombre, 
 SET foreign_key_checks = 1;
 
 -- VENTA y DETALLE_VENTA son insertados por el backend 
+
+DELIMITER //
+
+DROP PROCEDURE IF EXISTS sp_actualizar_stock//
+CREATE PROCEDURE sp_actualizar_stock(
+  IN p_id_producto INT,
+  IN p_nuevo_stock INT
+)
+BEGIN
+  IF p_nuevo_stock < 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El stock no puede ser negativo';
+  END IF;
+
+  UPDATE PRODUCTO
+  SET stock = p_nuevo_stock
+  WHERE id_producto = p_id_producto;
+
+  IF ROW_COUNT() = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Producto no encontrado';
+  END IF;
+END//
+
+DROP PROCEDURE IF EXISTS sp_reporte_ventas_por_fecha//
+CREATE PROCEDURE sp_reporte_ventas_por_fecha(
+  IN p_fecha_inicio DATE,
+  IN p_fecha_fin DATE
+)
+BEGIN
+  SELECT u.nombre AS empleado,
+         COUNT(v.id_venta) AS num_ventas,
+         SUM(v.total) AS total_ventas,
+         AVG(v.total) AS promedio_venta
+  FROM VENTA v
+  JOIN EMPLEADO e ON v.id_empleado = e.id_empleado
+  JOIN USUARIO u ON e.id_usuario = u.id_usuario
+  WHERE v.estado = 'completada'
+    AND DATE(v.fecha_venta) BETWEEN p_fecha_inicio AND p_fecha_fin
+  GROUP BY u.nombre
+  HAVING num_ventas > 0
+  ORDER BY total_ventas DESC;
+END//
+
+DROP PROCEDURE IF EXISTS sp_producto_mas_vendido//
+CREATE PROCEDURE sp_producto_mas_vendido(IN p_limite INT)
+BEGIN
+  SELECT p.id_producto, p.nombre, p.precio,
+         m.nombre AS marca,
+         d.nombre AS deporte,
+         SUM(dv.cantidad) AS total_vendido,
+         SUM(dv.subtotal) AS ingresos_totales,
+         COUNT(DISTINCT dv.id_venta) AS num_ventas
+  FROM DETALLE_VENTA dv
+  JOIN VENTA v ON dv.id_venta = v.id_venta
+  JOIN PRODUCTO p ON dv.id_producto = p.id_producto
+  JOIN MARCA m ON p.id_marca = m.id_marca
+  JOIN DEPORTE d ON p.id_deporte = d.id_deporte
+  WHERE v.estado = 'completada'
+  GROUP BY p.id_producto, p.nombre, p.precio, m.nombre, d.nombre
+  ORDER BY total_vendido DESC
+  LIMIT p_limite;
+END//
+
+DROP PROCEDURE IF EXISTS sp_crear_producto_seguro//
+CREATE PROCEDURE sp_crear_producto_seguro(
+  IN p_id_categoria INT,
+  IN p_id_proveedor INT,
+  IN p_id_marca INT,
+  IN p_id_deporte INT,
+  IN p_nombre VARCHAR(150),
+  IN p_descripcion VARCHAR(255),
+  IN p_talla VARCHAR(10),
+  IN p_color VARCHAR(40),
+  IN p_precio DECIMAL(10,2),
+  IN p_stock INT,
+  IN p_stock_minimo INT,
+  OUT p_id_producto INT
+)
+BEGIN
+  DECLARE EXIT HANDLER FOR SQLEXCEPTION
+  BEGIN
+    RESIGNAL;
+  END;
+
+  IF p_nombre IS NULL OR TRIM(p_nombre) = '' THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El nombre del producto es obligatorio';
+  END IF;
+  IF p_precio <= 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El precio debe ser mayor a cero';
+  END IF;
+  IF p_stock < 0 OR p_stock_minimo < 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'El stock no puede ser negativo';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM CATEGORIA WHERE id_categoria = p_id_categoria) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Categoria invalida';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM PROVEEDOR WHERE id_proveedor = p_id_proveedor) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Proveedor invalido';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM MARCA WHERE id_marca = p_id_marca) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Marca invalida';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM DEPORTE WHERE id_deporte = p_id_deporte) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Deporte invalido';
+  END IF;
+
+  INSERT INTO PRODUCTO
+    (id_categoria, id_proveedor, id_marca, id_deporte, nombre, descripcion, talla, color, precio, stock, stock_minimo)
+  VALUES
+    (p_id_categoria, p_id_proveedor, p_id_marca, p_id_deporte, p_nombre, p_descripcion, p_talla, p_color, p_precio, p_stock, p_stock_minimo);
+
+  SET p_id_producto = LAST_INSERT_ID();
+END//
+
+DROP PROCEDURE IF EXISTS sp_registrar_venta//
+CREATE PROCEDURE sp_registrar_venta(
+  IN p_id_cliente INT,
+  IN p_id_empleado INT,
+  IN p_items JSON,
+  OUT p_id_venta INT,
+  OUT p_total DECIMAL(10,2)
+)
+BEGIN
+  DECLARE v_i INT DEFAULT 0;
+  DECLARE v_len INT DEFAULT 0;
+  DECLARE v_id_producto INT;
+  DECLARE v_cantidad INT;
+  DECLARE v_stock INT;
+  DECLARE v_precio DECIMAL(10,2);
+  DECLARE v_subtotal DECIMAL(10,2);
+  DECLARE v_nombre VARCHAR(150);
+  DECLARE v_msg VARCHAR(255);
+
+  DECLARE EXIT HANDLER FOR SQLEXCEPTION
+  BEGIN
+    ROLLBACK;
+    RESIGNAL;
+  END;
+
+  START TRANSACTION;
+
+  IF NOT EXISTS (SELECT 1 FROM CLIENTE WHERE id_cliente = p_id_cliente) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Cliente invalido';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM EMPLEADO WHERE id_empleado = p_id_empleado) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Empleado invalido';
+  END IF;
+
+  SET v_len = JSON_LENGTH(p_items);
+  IF v_len IS NULL OR v_len = 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La venta debe tener detalle';
+  END IF;
+
+  SET p_total = 0.00;
+
+  WHILE v_i < v_len DO
+    SET v_id_producto = JSON_UNQUOTE(JSON_EXTRACT(p_items, CONCAT('$[', v_i, '].id_producto')));
+    SET v_cantidad = JSON_UNQUOTE(JSON_EXTRACT(p_items, CONCAT('$[', v_i, '].cantidad')));
+
+    IF v_cantidad <= 0 THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'La cantidad debe ser mayor a cero';
+    END IF;
+
+    IF NOT EXISTS (SELECT 1 FROM PRODUCTO WHERE id_producto = v_id_producto) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Producto invalido';
+    END IF;
+
+    SELECT nombre, stock, precio
+      INTO v_nombre, v_stock, v_precio
+    FROM PRODUCTO
+    WHERE id_producto = v_id_producto
+    FOR UPDATE;
+
+    IF v_stock < v_cantidad THEN
+      SET v_msg = CONCAT('Stock insuficiente para ', v_nombre);
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_msg;
+    END IF;
+
+    SET p_total = p_total + (v_precio * v_cantidad);
+    SET v_i = v_i + 1;
+  END WHILE;
+
+  INSERT INTO VENTA (id_cliente, id_empleado, total, estado)
+  VALUES (p_id_cliente, p_id_empleado, p_total, 'pendiente');
+
+  SET p_id_venta = LAST_INSERT_ID();
+  SET v_i = 0;
+
+  WHILE v_i < v_len DO
+    SET v_id_producto = JSON_UNQUOTE(JSON_EXTRACT(p_items, CONCAT('$[', v_i, '].id_producto')));
+    SET v_cantidad = JSON_UNQUOTE(JSON_EXTRACT(p_items, CONCAT('$[', v_i, '].cantidad')));
+
+    SELECT precio INTO v_precio
+    FROM PRODUCTO
+    WHERE id_producto = v_id_producto;
+
+    SET v_subtotal = v_precio * v_cantidad;
+
+    INSERT INTO DETALLE_VENTA (id_venta, id_producto, cantidad, precio_unitario, subtotal)
+    VALUES (p_id_venta, v_id_producto, v_cantidad, v_precio, v_subtotal);
+
+    UPDATE PRODUCTO
+    SET stock = stock - v_cantidad
+    WHERE id_producto = v_id_producto;
+
+    SET v_i = v_i + 1;
+  END WHILE;
+
+  UPDATE VENTA SET estado = 'completada' WHERE id_venta = p_id_venta;
+
+  COMMIT;
+END//
+
+DELIMITER ;
+
+CREATE ROLE IF NOT EXISTS rol_admin;
+CREATE ROLE IF NOT EXISTS rol_gerente;
+CREATE ROLE IF NOT EXISTS rol_vendedor;
+CREATE ROLE IF NOT EXISTS rol_inventario;
+CREATE ROLE IF NOT EXISTS rol_consulta;
+
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM rol_admin;
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM rol_gerente;
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM rol_vendedor;
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM rol_inventario;
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM rol_consulta;
+
+GRANT ALL PRIVILEGES ON tienda_deportes.* TO rol_admin;
+
+GRANT SELECT ON tienda_deportes.PRODUCTO TO rol_gerente;
+GRANT SELECT ON tienda_deportes.CATEGORIA TO rol_gerente;
+GRANT SELECT ON tienda_deportes.MARCA TO rol_gerente;
+GRANT SELECT ON tienda_deportes.DEPORTE TO rol_gerente;
+GRANT SELECT ON tienda_deportes.PROVEEDOR TO rol_gerente;
+GRANT SELECT ON tienda_deportes.CLIENTE TO rol_gerente;
+GRANT SELECT ON tienda_deportes.VENTA TO rol_gerente;
+GRANT SELECT ON tienda_deportes.DETALLE_VENTA TO rol_gerente;
+GRANT SELECT ON tienda_deportes.vista_stock_bajo TO rol_gerente;
+GRANT SELECT ON tienda_deportes.vista_ventas_detalle TO rol_gerente;
+GRANT EXECUTE ON PROCEDURE tienda_deportes.sp_reporte_ventas_por_fecha TO rol_gerente;
+GRANT EXECUTE ON PROCEDURE tienda_deportes.sp_producto_mas_vendido TO rol_gerente;
+
+GRANT SELECT ON tienda_deportes.PRODUCTO TO rol_vendedor;
+GRANT SELECT ON tienda_deportes.CATEGORIA TO rol_vendedor;
+GRANT SELECT ON tienda_deportes.MARCA TO rol_vendedor;
+GRANT SELECT ON tienda_deportes.DEPORTE TO rol_vendedor;
+GRANT SELECT, INSERT ON tienda_deportes.CLIENTE TO rol_vendedor;
+GRANT SELECT, INSERT, UPDATE ON tienda_deportes.VENTA TO rol_vendedor;
+GRANT SELECT, INSERT ON tienda_deportes.DETALLE_VENTA TO rol_vendedor;
+GRANT SELECT ON tienda_deportes.EMPLEADO TO rol_vendedor;
+GRANT SELECT ON tienda_deportes.USUARIO TO rol_vendedor;
+GRANT EXECUTE ON PROCEDURE tienda_deportes.sp_registrar_venta TO rol_vendedor;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON tienda_deportes.PRODUCTO TO rol_inventario;
+GRANT SELECT, INSERT, UPDATE, DELETE ON tienda_deportes.CATEGORIA TO rol_inventario;
+GRANT SELECT, INSERT, UPDATE, DELETE ON tienda_deportes.MARCA TO rol_inventario;
+GRANT SELECT, INSERT, UPDATE, DELETE ON tienda_deportes.DEPORTE TO rol_inventario;
+GRANT SELECT, INSERT, UPDATE, DELETE ON tienda_deportes.PROVEEDOR TO rol_inventario;
+GRANT SELECT ON tienda_deportes.vista_stock_bajo TO rol_inventario;
+GRANT EXECUTE ON PROCEDURE tienda_deportes.sp_actualizar_stock TO rol_inventario;
+GRANT EXECUTE ON PROCEDURE tienda_deportes.sp_crear_producto_seguro TO rol_inventario;
+
+GRANT SELECT ON tienda_deportes.PRODUCTO TO rol_consulta;
+GRANT SELECT ON tienda_deportes.CATEGORIA TO rol_consulta;
+GRANT SELECT ON tienda_deportes.MARCA TO rol_consulta;
+GRANT SELECT ON tienda_deportes.DEPORTE TO rol_consulta;
+GRANT SELECT ON tienda_deportes.vista_stock_bajo TO rol_consulta;
+GRANT EXECUTE ON PROCEDURE tienda_deportes.sp_producto_mas_vendido TO rol_consulta;
+
+CREATE USER IF NOT EXISTS 'proy3'@'%' IDENTIFIED BY 'secret';
+REVOKE ALL PRIVILEGES, GRANT OPTION FROM 'proy3'@'%';
+GRANT rol_admin TO 'proy3'@'%';
+SET DEFAULT ROLE rol_admin FOR 'proy3'@'%';
+FLUSH PRIVILEGES;

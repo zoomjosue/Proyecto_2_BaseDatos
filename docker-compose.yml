@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # Base de datos
   db:
@@ -9,7 +7,7 @@ services:
     environment:
       MARIADB_ROOT_PASSWORD: rootsecret
       MARIADB_DATABASE: tienda_deportes
-      MARIADB_USER: proy2
+      MARIADB_USER: proy3
       MARIADB_PASSWORD: secret
     volumes:
       - db_data:/var/lib/mysql
@@ -33,11 +31,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    env_file: .env
     environment:
-      DB_HOST: db
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-tienda_deportes}
+      DB_USER: ${DB_USER:-proy3}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      SESSION_SECRET: ${SESSION_SECRET:-proyecto_3_bd1_session_secret}
+      PORT: ${PORT:-3000}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:5173}
     ports:
-      - "3000:3000"
+      - "${BACKEND_PORT:-3000}:3000"
     volumes:
       - ./backend:/app
       - /app/node_modules
@@ -52,7 +56,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "5173:80"
+      - "${FRONTEND_PORT:-5173}:80"
 
 volumes:
   db_data:
