@@ -1,4 +1,5 @@
 const pool = require('../db/pool');
+const { Cliente } = require('../db/orm');
 
 async function getAll(req, res) {
   const { search } = req.query;
@@ -57,13 +58,15 @@ async function create(req, res) {
   if (!nombre) return res.status(400).json({ error: 'El nombre es obligatorio' });
 
   try {
-    const [r] = await pool.query(
-      `INSERT INTO CLIENTE (nombre, email, telefono, direccion) VALUES (?,?,?,?)`,
-      [nombre, email || null, telefono || null, direccion || null]
-    );
-    res.status(201).json({ id_cliente: r.insertId, message: 'Cliente creado' });
+    const cliente = await Cliente.create({
+      nombre,
+      email: email || null,
+      telefono: telefono || null,
+      direccion: direccion || null,
+    });
+    res.status(201).json({ id_cliente: cliente.id_cliente, message: 'Cliente creado con ORM' });
   } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY')
+    if (err.code === 'ER_DUP_ENTRY' || err.name === 'SequelizeUniqueConstraintError')
       return res.status(409).json({ error: 'Ya existe un cliente con ese email' });
     throw err;
   }

@@ -53,65 +53,19 @@ async function create(req, res) {
   if (!id_cliente || !id_empleado || !items?.length)
     return res.status(400).json({ error: 'id_cliente, id_empleado e items son requeridos' });
 
-  const conn = await pool.getConnection();
   try {
-    await conn.beginTransaction(); 
-
-    for (const item of items) {
-      const [rows] = await conn.query(
-        'SELECT stock, nombre FROM PRODUCTO WHERE id_producto = ? FOR UPDATE',
-        [item.id_producto]
-      );
-      if (!rows.length)
-        throw new Error(`Producto ID ${item.id_producto} no encontrado`);
-      if (rows[0].stock < item.cantidad)
-        throw new Error(`Stock insuficiente para "${rows[0].nombre}" (disponible: ${rows[0].stock})`);
-    }
-
-    let total = 0;
-    const detalles = [];
-    for (const item of items) {
-      const [rows] = await conn.query(
-        'SELECT precio FROM PRODUCTO WHERE id_producto = ?',
-        [item.id_producto]
-      );
-      const precio    = parseFloat(rows[0].precio);
-      const subtotal  = precio * item.cantidad;
-      total          += subtotal;
-      detalles.push({ ...item, precio_unitario: precio, subtotal });
-    }
-
-    const [ventaResult] = await conn.query(
-      `INSERT INTO VENTA (id_cliente, id_empleado, total, estado) VALUES (?,?,?,'pendiente')`,
-      [id_cliente, id_empleado, total.toFixed(2)]
+    await pool.query(
+      'CALL sp_registrar_venta(?, ?, ?, @id_venta, @total_venta)',
+      [id_cliente, id_empleado, JSON.stringify(items)]
     );
-    const id_venta = ventaResult.insertId;
-
-    for (const d of detalles) {
-      await conn.query(
-        `INSERT INTO DETALLE_VENTA (id_venta, id_producto, cantidad, precio_unitario, subtotal)
-         VALUES (?,?,?,?,?)`,
-        [id_venta, d.id_producto, d.cantidad, d.precio_unitario, d.subtotal]
-      );
-      await conn.query(
-        'UPDATE PRODUCTO SET stock = stock - ? WHERE id_producto = ?',
-        [d.cantidad, d.id_producto]
-      );
-    }
-
-    await conn.query(
-      `UPDATE VENTA SET estado = 'completada' WHERE id_venta = ?`,
-      [id_venta]
-    );
-
-    await conn.commit(); 
-    res.status(201).json({ id_venta, total: total.toFixed(2), message: 'Venta registrada correctamente' });
-
+    const [[out]] = await pool.query('SELECT @id_venta AS id_venta, @total_venta AS total');
+    res.status(201).json({
+      id_venta: out.id_venta,
+      total: out.total,
+      message: 'Venta registrada correctamente con stored procedure',
+    });
   } catch (err) {
-    await conn.rollback(); 
-    res.status(400).json({ error: err.message || 'Error al procesar la venta' });
-  } finally {
-    conn.release();
+    res.status(400).json({ error: err.sqlMessage || err.message || 'Error al procesar la venta' });
   }
 }
 
@@ -158,20 +112,8 @@ async function getReporte(req, res) {
   const desde = fecha_desde || '2000-01-01';
   const hasta = fecha_hasta || '2099-12-31';
 
-  const [porEmpleado] = await pool.query(`
-    SELECT u.nombre AS empleado,
-           COUNT(v.id_venta)    AS num_ventas,
-           SUM(v.total)         AS total_ventas,
-           AVG(v.total)         AS promedio_venta
-    FROM VENTA v
-    JOIN EMPLEADO e ON v.id_empleado = e.id_empleado
-    JOIN USUARIO  u ON e.id_usuario  = u.id_usuario
-    WHERE v.estado = 'completada'
-      AND DATE(v.fecha_venta) BETWEEN ? AND ?
-    GROUP BY u.nombre
-    HAVING num_ventas > 0
-    ORDER BY total_ventas DESC
-  `, [desde, hasta]);
+  const [porEmpleadoResult] = await pool.query('CALL sp_reporte_ventas_por_fecha(?, ?)', [desde, hasta]);
+  const porEmpleado = porEmpleadoResult[0];
 
   const [porCategoria] = await pool.query(`
     SELECT c.nombre AS categoria,
